@@ -26,25 +26,61 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
 import subprocess
 import sys
+from types import ModuleType
 from pathlib import Path
 
 # Allow running from repo root without installing
 REPO_ROOT = Path(__file__).resolve().parent.parent
-AGENT_OS_SRC = REPO_ROOT / "packages" / "agent-os" / "src"
-if AGENT_OS_SRC.exists():
-    sys.path.insert(0, str(AGENT_OS_SRC))
-
-from agent_os.security_skills import (
-    SecurityFinding,
-    Severity,
-    format_findings,
-    scan_directory,
-    scan_file,
-    scan_source,
+AGENT_OS_SOURCE_ROOTS = (
+    REPO_ROOT / "agent-governance-python" / "agent-os" / "src",
+    REPO_ROOT / "packages" / "agent-os" / "src",
 )
+
+
+def _load_security_skills() -> ModuleType:
+    """Load security_skills without requiring a package install."""
+    for agent_os_src in AGENT_OS_SOURCE_ROOTS:
+        security_skills_path = agent_os_src / "agent_os" / "security_skills.py"
+        if not security_skills_path.exists():
+            continue
+
+        spec = importlib.util.spec_from_file_location(
+            "agent_os_security_skills", security_skills_path
+        )
+        if spec is None or spec.loader is None:
+            break
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    try:
+        return importlib.import_module("agent_os.security_skills")
+    except ModuleNotFoundError as exc:
+        if exc.name != "agent_os":
+            raise
+
+    expected_paths = "\n".join(f"  - {path}" for path in AGENT_OS_SOURCE_ROOTS)
+    raise ModuleNotFoundError(
+        "Unable to locate agent_os source directory. Expected one of:\n"
+        f"{expected_paths}\n"
+        "Install agent_os or run this script from a complete repository checkout."
+    )
+
+
+_security_skills = _load_security_skills()
+SecurityFinding = _security_skills.SecurityFinding
+Severity = _security_skills.Severity
+format_findings = _security_skills.format_findings
+scan_directory = _security_skills.scan_directory
+scan_file = _security_skills.scan_file
+scan_source = _security_skills.scan_source
 
 SEVERITY_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW]
 
